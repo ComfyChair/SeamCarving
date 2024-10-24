@@ -4,7 +4,6 @@ import java.awt.Color
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
-import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 fun main(args: Array<String>) {
@@ -19,33 +18,80 @@ fun main(args: Array<String>) {
     }
     if (inPath.isNotEmpty() && outPath.isNotEmpty()) {
         if (File(inPath).exists()) {
-            val energyImage = energyImage(inPath)
-            ImageIO.write(energyImage, "png", File(outPath))
+            val image: BufferedImage = ImageIO.read(File(inPath))
+            image.verticalSeam()
+            ImageIO.write(image, "png", File(outPath))
         } else {
             println("Input file ${File(inPath).absolutePath} does not exist.")
         }
     }
 }
 
-fun energyImage(inPath: String): BufferedImage {
-    val image: BufferedImage = ImageIO.read(File(inPath))
-    val energy = MutableList(image.height) { MutableList(image.width) { 0.0 } }
-    // calculate energy values per pixel
-    for (x in 0 until image.width) {
-        for (y in 0 until image.height) {
-            energy[y][x] = image.getEnergy(x, y)
+fun BufferedImage.verticalSeam() {
+    val energyPixels = this.toEnergy().mapIndexed { y, row ->
+        row.mapIndexed { x, energy -> Pixel(x, y, energy) } }
+    // initialize distances with MAX_VALUE
+    val distances = energyPixels.flatten()
+        .associateWith { Double.MAX_VALUE }.toMutableMap()
+    // fill distance map to determine minimal paths from first to last row
+    println("Filling distance map")
+    energyPixels[0].forEach { it.seamFrom(distances, this.width, this.height) }
+    // mark Path with red pixels
+    println("Painting pixels")
+    var current = distances.filter { e -> e.key.y == height - 1 }.minByOrNull { e -> e.value }!!.key
+    this.setRGB(current.x, current.y, Color.red.rgb)
+    for (y in height - 2 downTo 0) {
+        current = distances.filter { e -> e.key.y == y && e.key.x in current.x -1 .. current.x +1}
+            .minByOrNull { e -> e.value }!!.key
+        this.setRGB(current.x, current.y, Color.red.rgb)
+    }
+}
+//TODO: Use priority queue to shorten runtime
+
+fun Pixel.seamFrom(distances: MutableMap<Pixel, Double>, width: Int, height: Int) {
+    // current shortest Path: min of last row's pixel.value
+    val minPath : Double = distances.entries
+        .filter { e -> e.key.y == this.y -1 && e.key.x in this.x -1 .. this.x +1 } // predecessor
+        .minOfOrNull { e -> e.value } ?: 0.0
+    val newMin = minPath + this.energy
+    if (minPath + this.energy < distances[this]!!) {
+        // if path is shorter than known paths, update map and pursuit path
+        distances[this] = newMin
+        if (this.y < height - 1) {
+            val nextSteps = this.stepDown()
+            nextSteps.filter { it.isInBounds(width, height) }
+                .forEach { pixel -> distances.keys.find { it == pixel }!!.seamFrom(distances, width, height) }
         }
     }
+}
+
+private fun Pixel.stepDown() : List<Pixel> {
+    val newY = this.y + 1
+    return listOf(
+        Pixel(this.x - 1, newY),
+        Pixel(this.x, newY),
+        Pixel(this.x + 1, newY)
+    )
+}
+
+fun energyImage(image: BufferedImage) {
+    val energy = image.toEnergy()
     val maxEnergy = energy.maxOf { row -> row.maxOf { it } }
     // set pixels to normalized energy = intensity
     for (x in 0 until image.width) {
         for (y in 0 until image.height) {
+            // normalize energy
             val intensity = (255.0 * energy[y][x] / maxEnergy).toInt()
             val color = Color(intensity, intensity, intensity)
             image.setRGB(x, y, color.rgb)
         }
     }
-    return image
+}
+
+private fun BufferedImage.toEnergy(): Array<Array<Double>> {
+    return Array(this.height) { y -> Array(this.width) { x ->
+        getEnergy(x, y)
+    } }
 }
 
 fun BufferedImage.getEnergy(x: Int, y: Int): Double {
@@ -81,38 +127,3 @@ fun gradient(pixelValue: Int, otherPixelValue: Int): Int {
 
 fun Int.squared() = this * this
 
-fun negativeImage(inPath: String) : BufferedImage {
-    val image: BufferedImage = ImageIO.read(File(inPath))
-    for (x in 0 until image.width) {
-        for (y in 0 until image.height) {
-            val originalColor = Color(image.getRGB(x, y))
-            val negativeColor = Color(
-                255 - originalColor.red,
-                255 - originalColor.green,
-                255 - originalColor.blue).rgb
-            image.setRGB(x, y, negativeColor)
-        }
-    }
-    return image
-}
-
-private fun redCrossImage() {
-    println("Enter rectangle width:")
-    val width = readln().toInt()
-    println("Enter rectangle height:")
-    val height = readln().toInt()
-    println("Enter output image name:")
-    val imageName = readln()
-
-    val image = createRedCrossImage(width, height)
-    ImageIO.write(image, "PNG", File(imageName))
-}
-
-private fun createRedCrossImage(width: Int, height: Int): BufferedImage {
-    val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-    val graphics = image.createGraphics()
-    graphics.color = Color.red
-    graphics.drawLine(0, 0, width -1, height-1)
-    graphics.drawLine(0, height-1, width-1, 0)
-    return image
-}
