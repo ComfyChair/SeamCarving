@@ -7,6 +7,8 @@ import java.util.*
 import javax.imageio.ImageIO
 import kotlin.math.sqrt
 
+enum class Orientation {VERTICAL, HORIZONTAL}
+
 fun main(args: Array<String>) {
     var inPath = ""
     var outPath = ""
@@ -20,7 +22,7 @@ fun main(args: Array<String>) {
     if (inPath.isNotEmpty() && outPath.isNotEmpty()) {
         if (File(inPath).exists()) {
             val image: BufferedImage = ImageIO.read(File(inPath))
-            image.greedySeam()
+            image.seam(Orientation.HORIZONTAL)
             ImageIO.write(image, "png", File(outPath))
         } else {
             println("Input file ${File(inPath).absolutePath} does not exist.")
@@ -28,19 +30,31 @@ fun main(args: Array<String>) {
     }
 }
 
-fun BufferedImage.greedySeam() {
+fun BufferedImage.seam(orientation: Orientation) {
     val red = Color.red.rgb
-    val energies = this.toEnergy()
+    var energies = this.toEnergy()
+    val (width, height) = when (orientation) {
+        Orientation.VERTICAL -> Pair(width, height)
+        Orientation.HORIZONTAL -> Pair(height, width)
+    }
+    // flip image in case of horizontal orientation
+    if (orientation == Orientation.HORIZONTAL) {
+        energies = Array(height) { x -> Array(width) { y ->
+            energies[y][x] } }
+    }
     val pixels = energies.mapIndexed { y, row -> row.mapIndexed { x, _ -> Pixel(x, y) } }.flatten()
     // search for lowest energy path
-    val shortest : List<Pixel> = dijkstraDown(pixels, energies)
+    val shortest : List<Pixel> = dijkstraDown(pixels, energies, width, height)
     // paint path in image
     for (pixel in shortest) {
-        this.setRGB(pixel.x, pixel.y, red)
+        when (orientation) {
+            Orientation.VERTICAL -> this.setRGB(pixel.x, pixel.y, red)
+            else -> this.setRGB(pixel.y, pixel.x, red)
+        }
     }
 }
 
-private fun BufferedImage.dijkstraDown(pixels: List<Pixel>, energies: Array<Array<Double>>) : List<Pixel> {
+private fun dijkstraDown(pixels: List<Pixel>, energies: Array<Array<Double>>, width: Int, height: Int) : List<Pixel> {
     val distances = pixels.associateWith { p -> if (p.y == 0) energies[0][p.x] else Double.MAX_VALUE }.toMutableMap()
     // start at smallest energy in first row
     val firstRow = pixels.filter { it.y == 0 }
@@ -59,7 +73,7 @@ private fun BufferedImage.dijkstraDown(pixels: List<Pixel>, energies: Array<Arra
             // add to result list when last row is reached
             paths.add(path)
         } else {
-            val nextPixels = path.last().oneDown(this.width - 1)
+            val nextPixels = path.last().oneDown(width - 1)
             for (next in nextPixels) {
                 val newDist: Double = distances[path.last()]!! + (energies[next.y][next.x])
                 if (newDist < distances[next]!!) {
