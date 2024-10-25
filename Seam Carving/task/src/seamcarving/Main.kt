@@ -10,51 +10,62 @@ import kotlin.math.sqrt
 enum class Orientation {VERTICAL, HORIZONTAL}
 
 fun main(args: Array<String>) {
-    var inPath = ""
-    var outPath = ""
-    for (i in args.indices step 2) {
-        val command = args[i]
-        when (command) {
-            "-in" -> inPath = args[i + 1]
-            "-out" -> outPath = args[i + 1]
+    val inPath = args[args.indexOf("-in") + 1]
+    val outPath = args[args.indexOf("-out") + 1]
+    val width = args[args.indexOf("-width") + 1]
+    val height = args[args.indexOf("-height") + 1]
+
+    if (File(inPath).exists()) {
+        var image: BufferedImage = ImageIO.read(File(inPath))
+        // vertical seams
+        for (v in 1..width.toInt()){
+            image = image.removeVerticalSeam()
         }
-    }
-    if (inPath.isNotEmpty() && outPath.isNotEmpty()) {
-        if (File(inPath).exists()) {
-            val image: BufferedImage = ImageIO.read(File(inPath))
-            image.seam(Orientation.HORIZONTAL)
-            ImageIO.write(image, "png", File(outPath))
-        } else {
-            println("Input file ${File(inPath).absolutePath} does not exist.")
+        // horizontal seams
+        image = image.transpose()
+        for (h in 1..height.toInt()){
+            image = image.removeVerticalSeam()
         }
+        image = image.transpose()
+        // output to file
+        ImageIO.write(image, "png", File(outPath))
+    } else {
+        println("Input file ${File(inPath).absolutePath} does not exist.")
     }
+
 }
 
-fun BufferedImage.seam(orientation: Orientation) {
-    val red = Color.red.rgb
-    var energies = this.toEnergy()
-    val (width, height) = when (orientation) {
-        Orientation.VERTICAL -> Pair(width, height)
-        Orientation.HORIZONTAL -> Pair(height, width)
+fun BufferedImage.transpose(): BufferedImage {
+    val newImage = BufferedImage(height, width, BufferedImage.TYPE_INT_RGB)
+    for (x in 0 until height) {
+        for (y in 0 until width) {
+            newImage.setRGB(x, y, this.getRGB(y, x))
+        }
     }
-    // flip image in case of horizontal orientation
-    if (orientation == Orientation.HORIZONTAL) {
-        energies = Array(height) { x -> Array(width) { y ->
-            energies[y][x] } }
-    }
+    return newImage
+}
+
+fun BufferedImage.removeVerticalSeam() : BufferedImage {
+    val energies = this.energize()
     val pixels = energies.mapIndexed { y, row -> row.mapIndexed { x, _ -> Pixel(x, y) } }.flatten()
     // search for lowest energy path
-    val shortest : List<Pixel> = dijkstraDown(pixels, energies, width, height)
-    // paint path in image
-    for (pixel in shortest) {
-        when (orientation) {
-            Orientation.VERTICAL -> this.setRGB(pixel.x, pixel.y, red)
-            else -> this.setRGB(pixel.y, pixel.x, red)
+    val seam : List<Pixel> = searchDown(pixels, energies, width, height)
+    // cut seam from image
+    val newWidth = this.width -1
+    val newImage = BufferedImage(newWidth, height, BufferedImage.TYPE_INT_RGB)
+    for (y in 0 until height) {
+        val remove: Pixel = seam[y]
+        for (x in 0 until newWidth) {
+            when {
+                x < remove.x -> newImage.setRGB(x, y, this.getRGB(x, y))       // pixel before seam
+                x >= remove.x -> newImage.setRGB(x, y, this.getRGB(x+1, y))  // pixel after seam
+            }
         }
     }
+    return newImage
 }
 
-private fun dijkstraDown(pixels: List<Pixel>, energies: Array<Array<Double>>, width: Int, height: Int) : List<Pixel> {
+private fun searchDown(pixels: List<Pixel>, energies: Array<Array<Double>>, width: Int, height: Int) : List<Pixel> {
     val distances = pixels.associateWith { p -> if (p.y == 0) energies[0][p.x] else Double.MAX_VALUE }.toMutableMap()
     // start at smallest energy in first row
     val firstRow = pixels.filter { it.y == 0 }
@@ -92,21 +103,7 @@ fun Pixel.oneDown(maxX: Int) : List<Pixel> {
     return listOf(Pixel(x - 1, newY), Pixel(x, newY), Pixel(x + 1, newY)).filter { it.x in 0..maxX }
 }
 
-fun energyImage(image: BufferedImage) {
-    val energy = image.toEnergy()
-    val maxEnergy = energy.maxOf { row -> row.maxOf { it } }
-    // set pixels to normalized energy = intensity
-    for (x in 0 until image.width) {
-        for (y in 0 until image.height) {
-            // normalize energy
-            val intensity = (255.0 * energy[y][x] / maxEnergy).toInt()
-            val color = Color(intensity, intensity, intensity)
-            image.setRGB(x, y, color.rgb)
-        }
-    }
-}
-
-private fun BufferedImage.toEnergy(): Array<Array<Double>> {
+private fun BufferedImage.energize(): Array<Array<Double>> {
     return Array(this.height) { y -> Array(this.width) { x ->
         getEnergy(x, y)
     } }
